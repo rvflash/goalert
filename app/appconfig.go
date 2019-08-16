@@ -50,5 +50,6 @@ type appConfig struct {
 
 	StubNotifiers bool
 
-	UIURL string
+	UIURL      string
+	UIRootPath string
 }

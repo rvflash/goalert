@@ -505,7 +505,8 @@ func getConfig() (appConfig, error) {
 
 		StubNotifiers: viper.GetBool("stub-notifiers"),
 
-		UIURL: viper.GetString("ui-url"),
+		UIURL:      viper.GetString("ui-url"),
+		UIRootPath: viper.GetString("ui-root-path"),
 	}
 
 	if cfg.DBURL == "" {
@@ -564,6 +565,7 @@ func init() {
 	RootCmd.PersistentFlags().Bool("log-errors-only", false, "Only log errors (superseeds other flags).")
 
 	RootCmd.Flags().String("ui-url", "", "Proxy UI requests to an alternate host. Default is to serve bundled assets from memory.")
+	RootCmd.Flags().String("ui-root-path", "/", "UI root path.")
 	RootCmd.Flags().Bool("disable-https-redirect", false, "Disable automatic HTTPS redirects.")
 
 	migrateCmd.Flags().String("up", "", "Target UP migration to apply.")

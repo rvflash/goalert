@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/target/goalert/web"
 	"go.opencensus.io/plugin/ochttp"
 )
+
+func (app *App) fullPath(s string) string {
+	return path.Join(app.cfg.UIRootPath, s)
+}
 
 func (app *App) initHTTP(ctx context.Context) error {
 	var traceMiddleware func(next http.Handler) http.Handler
@@ -44,7 +49,7 @@ func (app *App) initHTTP(ctx context.Context) error {
 		// request cooldown tracking (for graceful shutdown)
 		func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if !strings.HasPrefix(req.URL.Path, "/health") {
+				if !strings.HasPrefix(req.URL.Path, app.fullPath("/health")) {
 					app.cooldown.Trigger()
 				}
 				next.ServeHTTP(w, req)
@@ -124,8 +129,6 @@ func (app *App) initHTTP(ctx context.Context) error {
 		})
 	}
 
-	mux := http.NewServeMux()
-
 	generic := genericapi.NewHandler(genericapi.Config{
 		AlertStore:          app.AlertStore,
 		IntegrationKeyStore: app.IntegrationKeyStore,
@@ -133,64 +136,65 @@ func (app *App) initHTTP(ctx context.Context) error {
 		UserStore:           app.UserStore,
 	})
 
-	mux.Handle("/api/graphql", app.graphql2.Handler())
-	mux.Handle("/api/graphql/explore", app.graphql2.PlayHandler())
+	mux := http.NewServeMux()
+	mux.Handle( app.fullPath("/api/graphql"), app.graphql2.Handler())
+	mux.Handle( app.fullPath("/api/graphql/explore"), app.graphql2.PlayHandler())
 
-	mux.HandleFunc("/api/v2/config", app.ConfigStore.ServeConfig)
+	mux.HandleFunc( app.fullPath("/api/v2/config"), app.ConfigStore.ServeConfig)
 
-	mux.HandleFunc("/api/v2/identity/providers", app.authHandler.ServeProviders)
-	mux.HandleFunc("/api/v2/identity/logout", app.authHandler.ServeLogout)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers"), app.authHandler.ServeProviders)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/logout"), app.authHandler.ServeLogout)
 
 	basicAuth := app.authHandler.IdentityProviderHandler("basic")
-	mux.HandleFunc("/api/v2/identity/providers/basic", basicAuth)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers/basic"), basicAuth)
 
 	githubAuth := app.authHandler.IdentityProviderHandler("github")
-	mux.HandleFunc("/api/v2/identity/providers/github", githubAuth)
-	mux.HandleFunc("/api/v2/identity/providers/github/callback", githubAuth)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers/github"), githubAuth)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers/github/callback"), githubAuth)
 
 	oidcAuth := app.authHandler.IdentityProviderHandler("oidc")
-	mux.HandleFunc("/api/v2/identity/providers/oidc", oidcAuth)
-	mux.HandleFunc("/api/v2/identity/providers/oidc/callback", oidcAuth)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers/oidc"), oidcAuth)
+	mux.HandleFunc( app.fullPath("/api/v2/identity/providers/oidc/callback"), oidcAuth)
 
-	mux.HandleFunc("/api/v2/mailgun/incoming", mailgun.IngressWebhooks(app.AlertStore, app.IntegrationKeyStore))
-	mux.HandleFunc("/api/v2/grafana/incoming", grafana.GrafanaToEventsAPI(app.AlertStore, app.IntegrationKeyStore))
+	mux.HandleFunc( app.fullPath("/api/v2/mailgun/incoming"), mailgun.IngressWebhooks(app.AlertStore, app.IntegrationKeyStore))
+	mux.HandleFunc( app.fullPath("/api/v2/grafana/incoming"), grafana.GrafanaToEventsAPI(app.AlertStore, app.IntegrationKeyStore))
 
-	mux.HandleFunc("/api/v2/generic/incoming", generic.ServeCreateAlert)
-	mux.HandleFunc("/api/v2/heartbeat/", generic.ServeHeartbeatCheck)
-	mux.HandleFunc("/api/v2/user-avatar/", generic.ServeUserAvatar)
+	mux.HandleFunc( app.fullPath("/api/v2/generic/incoming"), generic.ServeCreateAlert)
+	mux.HandleFunc( app.fullPath("/api/v2/heartbeat/"), generic.ServeHeartbeatCheck)
+	mux.HandleFunc( app.fullPath("/api/v2/user-avatar/"), generic.ServeUserAvatar)
 
-	mux.HandleFunc("/api/v2/twilio/message", app.twilioSMS.ServeMessage)
-	mux.HandleFunc("/api/v2/twilio/message/status", app.twilioSMS.ServeStatusCallback)
-	mux.HandleFunc("/api/v2/twilio/call", app.twilioVoice.ServeCall)
-	mux.HandleFunc("/api/v2/twilio/call/status", app.twilioVoice.ServeStatusCallback)
+	mux.HandleFunc( app.fullPath("/api/v2/twilio/message"), app.twilioSMS.ServeMessage)
+	mux.HandleFunc( app.fullPath("/api/v2/twilio/message/status"), app.twilioSMS.ServeStatusCallback)
+	mux.HandleFunc( app.fullPath("/api/v2/twilio/call"), app.twilioVoice.ServeCall)
+	mux.HandleFunc( app.fullPath("/api/v2/twilio/call/status"), app.twilioVoice.ServeStatusCallback)
 
 	// Legacy (v1) API mappings
-	mux.HandleFunc("/v1/graphql", app.graphql.ServeHTTP)
-	muxRewrite(mux, "/v1/graphql2", "/api/graphql")
-	muxRedirect(mux, "/v1/graphql2/explore", "/api/graphql/explore")
-	muxRewrite(mux, "/v1/config", "/api/v2/config")
-	muxRewrite(mux, "/v1/identity/providers", "/api/v2/identity/providers")
-	muxRewritePrefix(mux, "/v1/identity/providers/", "/api/v2/identity/providers/")
-	muxRewrite(mux, "/v1/identity/logout", "/api/v2/identity/logout")
+	mux.HandleFunc( app.fullPath("/v1/graphql"), app.graphql.ServeHTTP)
+	muxRewrite(mux,  app.fullPath("/v1/graphql2"), "/api/graphql")
+	muxRedirect(mux,  app.fullPath("/v1/graphql2/explore"), "/api/graphql/explore")
+	muxRewrite(mux,  app.fullPath("/v1/config"), "/api/v2/config")
+	muxRewrite(mux,  app.fullPath("/v1/identity/providers"), "/api/v2/identity/providers")
+	muxRewritePrefix(mux,  app.fullPath("/v1/identity/providers/"), "/api/v2/identity/providers/")
+	muxRewrite(mux,  app.fullPath("/v1/identity/logout"), "/api/v2/identity/logout")
 
-	muxRewrite(mux, "/v1/webhooks/mailgun", "/api/v2/mailgun/incoming")
-	muxRewrite(mux, "/v1/webhooks/grafana", "/api/v2/grafana/incoming")
-	muxRewrite(mux, "/v1/api/alerts", "/api/v2/generic/incoming")
-	muxRewritePrefix(mux, "/v1/api/heartbeat/", "/api/v2/heartbeat/")
-	muxRewriteWith(mux, "/v1/api/users/", func(req *http.Request) *http.Request {
+	muxRewrite(mux,  app.fullPath("/v1/webhooks/mailgun"), "/api/v2/mailgun/incoming")
+	muxRewrite(mux,  app.fullPath("/v1/webhooks/grafana"), "/api/v2/grafana/incoming")
+	muxRewrite(mux,  app.fullPath("/v1/api/alerts"), "/api/v2/generic/incoming")
+	muxRewritePrefix(mux,  app.fullPath("/v1/api/heartbeat/"), "/api/v2/heartbeat/")
+	muxRewriteWith(mux,  app.fullPath("/v1/api/users/"), func(req *http.Request) *http.Request {
 		parts := strings.Split(strings.TrimSuffix(req.URL.Path, "/avatar"), "/")
-		req.URL.Path = "/api/v2/user-avatar/" + parts[len(parts)-1]
+		req.URL.Path =  app.fullPath("/api/v2/user-avatar/" + parts[len(parts)-1])
 		return req
 	})
 
-	muxRewrite(mux, "/v1/twilio/sms/messages", "/api/v2/twilio/message")
-	muxRewrite(mux, "/v1/twilio/sms/status", "/api/v2/twilio/message/status")
-	muxRewrite(mux, "/v1/twilio/voice/call", "/api/v2/twilio/call?type=alert")
-	muxRewrite(mux, "/v1/twilio/voice/alert-status", "/api/v2/twilio/call?type=alert-status")
-	muxRewrite(mux, "/v1/twilio/voice/test", "/api/v2/twilio/call?type=test")
-	muxRewrite(mux, "/v1/twilio/voice/stop", "/api/v2/twilio/call?type=stop")
-	muxRewrite(mux, "/v1/twilio/voice/verify", "/api/v2/twilio/call?type=verify")
-	muxRewrite(mux, "/v1/twilio/voice/status", "/api/v2/twilio/call/status")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/sms/messages"), "/api/v2/twilio/message")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/sms/status"), "/api/v2/twilio/message/status")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/call"), "/api/v2/twilio/call?type=alert")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/alert-status"), "/api/v2/twilio/call?type=alert-status")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/test"), "/api/v2/twilio/call?type=test")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/stop"), "/api/v2/twilio/call?type=stop")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/verify"), "/api/v2/twilio/call?type=verify")
+	muxRewrite(mux,  app.fullPath("/v1/twilio/voice/status"), "/api/v2/twilio/call/status")
 
 	twilioHandler := twilio.WrapValidation(
 		// go back to the regular mux after validation
@@ -202,21 +206,21 @@ func (app *App) initHTTP(ctx context.Context) error {
 
 	// twilio calls should go through the validation handler first
 	// since the signature is based on the original URL
-	topMux.Handle("/v1/twilio/", twilioHandler)
-	topMux.Handle("/api/v2/twilio/", twilioHandler)
+	topMux.Handle( app.fullPath("/v1/twilio/"), twilioHandler)
+	topMux.Handle( app.fullPath("/api/v2/twilio/"), twilioHandler)
 
-	topMux.Handle("/v1/", mux)
-	topMux.Handle("/api/", mux)
+	topMux.Handle( app.fullPath("/v1/"), mux)
+	topMux.Handle( app.fullPath("/api/"), mux)
 
-	topMux.HandleFunc("/health", app.healthCheck)
-	topMux.HandleFunc("/health/engine", app.engineStatus)
+	topMux.HandleFunc( app.fullPath("/health"), app.healthCheck)
+	topMux.HandleFunc( app.fullPath("/health/engine"), app.engineStatus)
 
 	webH, err := web.NewHandler(app.cfg.UIURL)
 	if err != nil {
 		return err
 	}
 	// non-API/404s go to UI handler
-	topMux.Handle("/", webH)
+	topMux.Handle( app.fullPath("/"), webH)
 
 	app.srv = &http.Server{
 		Handler: applyMiddleware(topMux, middleware...),
